@@ -154,8 +154,11 @@ int main(int argc, char** argv)
 	}
 
 	res = mtu_discovery(&src, &dst, protocol, retries, ms_timeout);
-	if (res == MTU_ERR_TIMEOUT)
-		fprintf(stderr, "No reply from %s.\n", inet_ntop(AF_INET, &dst.sin_addr, format_addr, 16));
+	if (res < 0)
+	{
+		if (res == MTU_ERR_TIMEOUT)
+			fprintf(stderr, "No reply from %s.\n", inet_ntop(AF_INET, &dst.sin_addr, format_addr, 16));
+	}
 	else
 		printf("\nPLPMTUD to %s: %d bytes (20 IPv4 header + 8 %s header + %d data).\n", inet_ntop(AF_INET, &dst.sin_addr, format_addr, 16), res, protocol == MTU_PROTO_UDP? "UDP" : "ICMP", res - MTU_IPSIZE - MTU_UDPSIZE);
 	return 0;

@@ -138,7 +138,7 @@ int _createICMPsock(int timeout_limit)
 
 int mtu_discovery(struct sockaddr_in* source, struct sockaddr_in* dest, int protocol, int max_tries, int timeout)
 {
-	int fd;
+	int fd, i;
 
 	if (dest == NULL)	{ return MTU_ERR_PARAM; }
 	if (max_tries < 1)	{ return MTU_ERR_PARAM; }
@@ -180,7 +180,7 @@ int mtu_discovery(struct sockaddr_in* source, struct sockaddr_in* dest, int prot
 	s.icmp_hdr.type = ICMP_ECHO;
 	s.icmp_hdr.un.echo.id = getpid();
 	s.icmp_hdr.un.echo.sequence = 1;
-	for(int i=0; i < MAX_BUF; i++)
+	for(i=0; i < MAX_BUF; i++)
 		s.data[i] = 'a' + (i % 26);
 
 	curr_tries = max_tries;
