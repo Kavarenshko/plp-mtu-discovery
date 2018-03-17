@@ -38,7 +38,7 @@ int validateArgs(int argc, char** argv, struct sockaddr_in* lc_addr, struct sock
 				else
 					return 0;
 				break;
-			case 's': // server addr (address)
+			case 's': // server addr (address if protocol is ICMP, address:port if protocol is UDP)
 				sv_given = 1;
 				if (*proto == MTU_PROTO_UDP && sscanf(optarg, "%[^:]:%d", sv_ip, &sv_port) == 2)
 					break;
@@ -154,7 +154,9 @@ int main(int argc, char** argv)
 	}
 
 	res = mtu_discovery(&src, &dst, protocol, retries, ms_timeout);
-	printf("\nPLPMTUD to %s: %d bytes (20 IPv4 header + 8 %s header + %d data).\n", inet_ntop(AF_INET, &dst.sin_addr, format_addr, 16), res, protocol == MTU_PROTO_UDP? "UDP" : "ICMP", res - 28);
-
+	if (res == MTU_ERR_TIMEOUT)
+		fprintf(stderr, "No reply from %s.\n", inet_ntop(AF_INET, &dst.sin_addr, format_addr, 16));
+	else
+		printf("\nPLPMTUD to %s: %d bytes (20 IPv4 header + 8 %s header + %d data).\n", inet_ntop(AF_INET, &dst.sin_addr, format_addr, 16), res, protocol == MTU_PROTO_UDP? "UDP" : "ICMP", res - MTU_IPSIZE - MTU_UDPSIZE);
 	return 0;
 }
