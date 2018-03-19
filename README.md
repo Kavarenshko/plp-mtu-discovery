@@ -7,7 +7,7 @@ This program performs Packetization Layer Path MTU Discovery as described in [RF
 
 While TCP connections automatically adjust MTU size over time depending on various indicators (network performance, packet loss, ICMP error messages, ...), this is not the case for connection-less protocols.
 
-When performance is essential, **throughput**, **packet fragmentation** and **route reliability** are three key indicators to analyze in order to optimize stream performance. Since route reliability does not always depend on us, we should strive to maximize throughput while **NOT performing packet fragmentation**, which can severely degrade performance<sup>[[1]()]</sup>.
+When performance is essential, **throughput**, **packet fragmentation** and **route reliability** are three key indicators to analyze in order to optimize stream performance. Since route reliability does not always depend on us, we should strive to maximize throughput while **NOT performing packet fragmentation**, which can severely degrade performance<sup>[[1](http://www.hpl.hp.com/techreports/Compaq-DEC/WRL-87-3.pdf)]</sup>.
 
 The original proposal for Path MTU Discovery relied on `ICMP Fragmentation Needed` packets to be delivered when a IPv4 packet with *Don't Fragment* field set was too large to be propagated. Unfortunately, some routers do not generate these kind of errors but choose to silently ignore large packets instead. A client has no way to determine the cause of the packet loss.
 
@@ -27,12 +27,11 @@ The only requirement of *ICMP mode* is that the host must be capable to reply to
 
 ### UDP mode
 
-The same algorithm applies to UDP packets, but you need to run a small server (*test_udp.py*) on your receiving host in order to send back acknowledgment messages.
+The same algorithm applies to UDP packets, but you need to run a server (*udp_server.py*) on your receiving host in order to send back acknowledgment messages.
 
 ### Compiling & Running
 
-As of today, this program has been tested on various Linux distributions. It should also work on OSX, will update as soon as I test it.
-
+This program should run fine on most Linux distributions. Work to support OS X is underway.
 ```
 gcc -Wall -Wextra mtu_discovery.c mtu.c -o plpmtu
 ```
@@ -53,7 +52,7 @@ If you want to run **UDP mode** instead:
 | Specifier | Description |
 | --- | --- |
 | -p {icmp/udp} | Select in which mode to operate.
-| -s &lt;addr[:port]&gt; | Specify server's address. If running in UDP mode, you must also specify the destination port by appending ':port'<br> (e.g. `-s 8.8.8.8:12345`) |
+| -s &lt;addr[:port]&gt; | Specify server's address. If running in UDP mode, you must also specify the destination port by appending ':port' (e.g. `-s 8.8.8.8:12345`) |
 | -l &lt;addr:port&gt; | Optional. Select on which address to bind(); used in UDP mode; might be removed. |
 | -t &lt;timeout&gt; | Optional. Select the maximum time to wait for a response from the server, default is 1 second; time is expressed in milliseconds. |
 | -r &lt;max-reqs&gt; | Optional. Select the maximum number of failed attempts needed to declare a MTU size invalid, default is 3 attempts. |

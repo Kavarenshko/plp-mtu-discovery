@@ -194,7 +194,7 @@ int main(int argc, char** argv)
 
 	if (!validateArgs(argc, argv, &src, &dst, &protocol, &ms_timeout, &retries))
 	{
-		fprintf(stderr, "Usage:\nUDP discovery: %s -p udp -s <ip:port> [-l <ip:port> -t <timeout> -r <max-retries>]\nICMP discovery: sudo %s -p icmp -s <ip> [-l <ip> -t <timeout> -r <max-retries>]\n", argv[0], argv[0]);
+		fprintf(stderr, "Usage:\nICMP mode: sudo %s -p icmp -s <destination> [-t <timeout> -r <max-requests>]\nUDP mode: %s -p udp -s <destination:port> [-l <address:port> -t <timeout> -r <max-requests>]\n", argv[0], argv[0]);
 		return 1;
 	}
 
