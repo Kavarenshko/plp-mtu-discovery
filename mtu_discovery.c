@@ -26,6 +26,8 @@ int validateArgs(int argc, char** argv, struct sockaddr_in* lc_addr, struct sock
 
 	lc_addr->sin_family = AF_INET;
 	sv_addr->sin_family = AF_INET;
+	lc_addr->sin_port = 0; // filled in by the kernel when using UPD, unused in ICMP
+	inet_pton(AF_INET, "0.0.0.0", &lc_addr->sin_addr); // default local address
 
 	memset(&resolve_hints, 0, sizeof(struct addrinfo));
 	resolve_hints.ai_family = AF_INET;
@@ -57,7 +59,7 @@ int validateArgs(int argc, char** argv, struct sockaddr_in* lc_addr, struct sock
 				sv_given = 1;
 				if (*proto == MTU_PROTO_UDP)
 				{
-					if (sscanf(optarg, "%[^:]:%d", sv_ip, &sv_port) == 2) // valid
+					if (sscanf(optarg, "%[^:]:%d", sv_ip, &sv_port) == 2) // valid format
 						break;
 					fprintf(stderr, "Invalid server <ip:addr>: %s\n", optarg);
 					return 0;
@@ -73,18 +75,18 @@ int validateArgs(int argc, char** argv, struct sockaddr_in* lc_addr, struct sock
 				else // should not happen
 					return 0;
 			case 'l': // local addr (address:port)
-				lc_given = 1;
 				if (*proto == MTU_PROTO_UDP)
 				{
-					if (sscanf(optarg, "%[^:]:%d", lc_ip, &lc_port) == 2)
+					lc_given = 1;
+					if (sscanf(optarg, "%[^:]:%d", lc_ip, &lc_port) == 2) // valid format
 						break;
 					fprintf(stderr, "Invalid local <ip:addr>: %s\n", optarg);
 					return 0;
 				}
 				else if (*proto == MTU_PROTO_ICMP)
 				{
-					fprintf(stderr, "Invalid option for ICMP mode: -l\n");
-					return 0;
+					fprintf(stderr, "Warning: local server address should not be specified in ICMP mode.\n");
+					break;
 				}
 				else // should not happen
 					return 0;
@@ -131,7 +133,7 @@ int validateArgs(int argc, char** argv, struct sockaddr_in* lc_addr, struct sock
 		{
 			if (lc_port < 1 || lc_port > 65535)
 			{
-				fprintf(stderr, "Invalid local port number '%d'.\n", lc_port);
+				fprintf(stderr, "Invalid local port number: '%d'.\n", lc_port);
 				return 0;
 			}
 			lc_addr->sin_port = htons(lc_port);
@@ -151,24 +153,20 @@ int validateArgs(int argc, char** argv, struct sockaddr_in* lc_addr, struct sock
 		}
 		freeaddrinfo(resolve_result);
 	}
-	else
-	{
-		lc_addr->sin_port = 0; // filled in by the kernel when using UPD, unused in ICMP
-		inet_pton(AF_INET, "0.0.0.0", &lc_addr->sin_addr);
-	}
 
 	if (*proto == MTU_PROTO_UDP)
 	{
 		if (sv_port < 1 || sv_port > 65535)
 		{
-			fprintf(stderr, "Invalid server port number '%d'.\n", sv_port);
+			fprintf(stderr, "Invalid server port number: '%d'.\n", sv_port);
 			return 0;
 		}
 		sv_addr->sin_port = htons(sv_port);
 	}
 	else
-		sv_addr->sin_port = 0; // filled in by the kernel when using UPD, unused in ICMP
+		sv_addr->sin_port = 0; // unused in ICMP
 
+	// hostname resolution
 	if ((gai_ret = getaddrinfo(sv_ip, NULL, &resolve_hints, &resolve_result)) != 0) // this generates a memory leak on some systems
 	{
 		fprintf(stderr, "Could not resolve server address '%s': %s\n", sv_ip, gai_strerror(gai_ret));
@@ -199,7 +197,6 @@ int main(int argc, char** argv)
 		fprintf(stderr, "Usage:\nUDP discovery: %s -p udp -s <ip:port> [-l <ip:port> -t <timeout> -r <max-retries>]\nICMP discovery: sudo %s -p icmp -s <ip> [-l <ip> -t <timeout> -r <max-retries>]\n", argv[0], argv[0]);
 		return 1;
 	}
-	return 0;
 
 	res = mtu_discovery(&src, &dst, protocol, retries, ms_timeout);
 	if (res < 0)
