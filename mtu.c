@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <unistd.h> // getpid()
 #include <sys/time.h> // struct timeval
-#include <sys/types.h> // getpid()
+#include <sys/types.h> // getpid(), struct addrinfo
 
 #include "mtu.h"
 

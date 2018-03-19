@@ -1,6 +1,7 @@
 
+#include <netdb.h> // struct addrinfo
 #include <stdio.h>
-#include <string.h>
+#include <string.h> // strcmp(), strcpy(), memset()
 #include <unistd.h> // getopt()
 #include <arpa/inet.h> // inet_pton()
 #include <netinet/in.h> // struct sockaddr_in
@@ -11,18 +12,29 @@ int validateArgs(int argc, char** argv, struct sockaddr_in* lc_addr, struct sock
 {
 	// this function returns 1 if the command line arguments are valid, 0 otherwise
 
-	int opt, lc_port, sv_port;
+	int opt, lc_port, sv_port, gai_ret;
 	int pt_given = 0; // 1 if protocol is provided
 	int lc_given = 0; // 1 if local addr is provided
 	int sv_given = 0; // 1 if server addr is provided
-	char lc_ip[16] = {0};
-	char sv_ip[16] = {0};
+	char lc_ip[256] = {0};
+	char sv_ip[256] = {0};
+	struct addrinfo resolve_hints;
+	struct addrinfo *resolve_result, *resolve_rp;
 
 	*ms_timeout  = MTU_DEFAULT_TIMEOUT;
 	*max_retries = MTU_DEFAULT_RETRIES;
 
 	lc_addr->sin_family = AF_INET;
 	sv_addr->sin_family = AF_INET;
+
+	memset(&resolve_hints, 0, sizeof(struct addrinfo));
+	resolve_hints.ai_family = AF_INET;
+	resolve_hints.ai_socktype = 0;
+	resolve_hints.ai_flags = 0;
+	resolve_hints.ai_protocol = 0;
+	resolve_hints.ai_canonname = NULL;
+	resolve_hints.ai_addr = NULL;
+	resolve_hints.ai_next = NULL;
 
 	opterr = 0; // do not print any error message (default behavior of getopt())
 	while((opt = getopt(argc, argv, "p:s:l:t:r:")) != -1)
@@ -36,35 +48,59 @@ int validateArgs(int argc, char** argv, struct sockaddr_in* lc_addr, struct sock
 				else if (strcmp(optarg, "icmp") == 0)
 					*proto = MTU_PROTO_ICMP;
 				else
+				{
+					fprintf(stderr, "Invalid protocol: %s\n", optarg);
 					return 0;
+				}
 				break;
 			case 's': // server addr (address if protocol is ICMP, address:port if protocol is UDP)
 				sv_given = 1;
-				if (*proto == MTU_PROTO_UDP && sscanf(optarg, "%[^:]:%d", sv_ip, &sv_port) == 2)
-					break;
+				if (*proto == MTU_PROTO_UDP)
+				{
+					if (sscanf(optarg, "%[^:]:%d", sv_ip, &sv_port) == 2) // valid
+						break;
+					fprintf(stderr, "Invalid server <ip:addr>: %s\n", optarg);
+					return 0;
+				}
 				else if (*proto == MTU_PROTO_ICMP)
 				{
-					strcpy(sv_ip, optarg);
+					if (sscanf(optarg, "%[^:]:%d", sv_ip, &sv_port) == 2)
+						fprintf(stderr, "Warning: port number should not be specified in ICMP mode.\n");
+					else
+						strcpy(sv_ip, optarg);
 					break;
 				}
 				else // should not happen
 					return 0;
 			case 'l': // local addr (address:port)
 				lc_given = 1;
-				if (*proto == MTU_PROTO_UDP && sscanf(optarg, "%[^:]:%d", lc_ip, &lc_port) != 2)
+				if (*proto == MTU_PROTO_UDP)
+				{
+					if (sscanf(optarg, "%[^:]:%d", lc_ip, &lc_port) == 2)
+						break;
+					fprintf(stderr, "Invalid local <ip:addr>: %s\n", optarg);
 					return 0;
+				}
 				else if (*proto == MTU_PROTO_ICMP)
-					strcpy(lc_ip, optarg);
+				{
+					fprintf(stderr, "Invalid option for ICMP mode: -l\n");
+					return 0;
+				}
 				else // should not happen
 					return 0;
-				break;
 			case 't': // timeout
 				if (sscanf(optarg, "%d", ms_timeout) != 1)
+				{
+					fprintf(stderr, "Invalid timeout value: '%s'\n", optarg);
 					return 0;
+				}
 				break;
 			case 'r': // max retries
 				if (sscanf(optarg, "%d", max_retries) != 1)
+				{
+					fprintf(stderr, "Invalid maxreq value: '%s'\n", optarg);
 					return 0;
+				}
 				break;
 			case '?': // missing or invalid argument
 				return 0;
@@ -77,15 +113,15 @@ int validateArgs(int argc, char** argv, struct sockaddr_in* lc_addr, struct sock
 	if (!pt_given || !sv_given)
 		return 0;
 
-	if (*ms_timeout < 0)
+	if (*ms_timeout < 0 || *ms_timeout > 1000000)
 	{
-		fprintf(stderr, "Invalid timeout value '%d'\n", *ms_timeout);
+		fprintf(stderr, "Invalid timeout value: '%d'\n", *ms_timeout);
 		return 0;
 	}
 
-	if (*max_retries < 0)
+	if (*max_retries < 0 || *max_retries > 1000000)
 	{
-		fprintf(stderr, "Invalid retry value '%d'\n", *max_retries);
+		fprintf(stderr, "Invalid maxreq value: '%d'\n", *max_retries);
 		return 0;
 	}
 
@@ -101,13 +137,19 @@ int validateArgs(int argc, char** argv, struct sockaddr_in* lc_addr, struct sock
 			lc_addr->sin_port = htons(lc_port);
 		}
 
-		if (strcmp("localhost", lc_ip) == 0)
-			inet_pton(AF_INET, "127.0.0.1", &lc_addr->sin_addr);
-		else if (inet_pton(AF_INET, lc_ip, &lc_addr->sin_addr) == 0)
+		// hostname resolution
+		if ((gai_ret = getaddrinfo(lc_ip, NULL, &resolve_hints, &resolve_result)) != 0) // this generates a memory leak on some systems
 		{
-			fprintf(stderr, "Invalid local address '%s'.\n", lc_ip);
+			fprintf(stderr, "Could not resolve local address '%s': %s\n", lc_ip, gai_strerror(gai_ret));
 			return 0;
 		}
+
+		for(resolve_rp = resolve_result; resolve_rp != NULL; resolve_rp = resolve_rp->ai_next)
+		{
+			struct sockaddr_in *ipv4_addr = (struct sockaddr_in *)resolve_rp->ai_addr;
+			lc_addr->sin_addr = ipv4_addr->sin_addr;
+		}
+		freeaddrinfo(resolve_result);
 	}
 	else
 	{
@@ -127,13 +169,18 @@ int validateArgs(int argc, char** argv, struct sockaddr_in* lc_addr, struct sock
 	else
 		sv_addr->sin_port = 0; // filled in by the kernel when using UPD, unused in ICMP
 
-	if (strcmp("localhost", sv_ip) == 0)
-		inet_pton(AF_INET, "127.0.0.1", &sv_addr->sin_addr);
-	else if (inet_pton(AF_INET, sv_ip, &sv_addr->sin_addr) == 0)
+	if ((gai_ret = getaddrinfo(sv_ip, NULL, &resolve_hints, &resolve_result)) != 0) // this generates a memory leak on some systems
 	{
-		fprintf(stderr, "Invalid server address '%s'.\n", sv_ip);
+		fprintf(stderr, "Could not resolve server address '%s': %s\n", sv_ip, gai_strerror(gai_ret));
 		return 0;
 	}
+
+	for(resolve_rp = resolve_result; resolve_rp != NULL; resolve_rp = resolve_rp->ai_next)
+	{
+		struct sockaddr_in *ipv4_addr = (struct sockaddr_in *)resolve_rp->ai_addr;
+		sv_addr->sin_addr = ipv4_addr->sin_addr;
+	}
+	freeaddrinfo(resolve_result);
 
 	return 1;
 }
@@ -152,6 +199,7 @@ int main(int argc, char** argv)
 		fprintf(stderr, "Usage:\nUDP discovery: %s -p udp -s <ip:port> [-l <ip:port> -t <timeout> -r <max-retries>]\nICMP discovery: sudo %s -p icmp -s <ip> [-l <ip> -t <timeout> -r <max-retries>]\n", argv[0], argv[0]);
 		return 1;
 	}
+	return 0;
 
 	res = mtu_discovery(&src, &dst, protocol, retries, ms_timeout);
 	if (res < 0)
