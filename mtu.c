@@ -1,5 +1,6 @@
 #include <errno.h>
 #include <stdio.h>
+#include <string.h> // memset()
 #include <unistd.h> // getpid()
 #include <sys/time.h> // struct timeval
 #include <sys/types.h> // getpid(), struct addrinfo
@@ -160,10 +161,13 @@ int mtu_discovery(struct sockaddr_in* source, struct sockaddr_in* dest, int prot
 
 	int mtu_lbound, mtu_current, mtu_ubound, mtu_best;
 	int bytes, curr_tries, res, protocol_difference, *buf_addr_send, *buf_addr_recv;
-	struct mtu_ip_packet s  = {0};
-	struct mtu_ip_packet r  = {0};
+	struct mtu_ip_packet s;
+	struct mtu_ip_packet r;
 	struct sockaddr_in from = {0};
 	socklen_t from_size = sizeof(struct sockaddr_in);
+
+	memset(&s, 0, sizeof(struct mtu_ip_packet)); // avoid bracket initialization warnings
+	memset(&r, 0, sizeof(struct mtu_ip_packet));
 
 	mtu_best   = MTU_ERR_TIMEOUT; // we do not know if the server is up and reachable
 	mtu_lbound = MTU_MINSIZE;
