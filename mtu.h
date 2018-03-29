@@ -4,6 +4,7 @@
 
 #include <sys/socket.h> // socket()
 #include <netinet/ip.h> // struct ip
+#include <netinet/udp.h> // struct udphdr
 #include <netinet/ip_icmp.h> // struct icmphdr
 
 #define MTU_ERR_PARAM    -1 // invalid parameter
@@ -24,6 +25,9 @@
 
 #if defined(__APPLE__) || defined(__MACH__)
 	#define MTU_PLATFORM_TYPE 1
+	#define ICMP_ECHOREPLY    0
+	#define ICMP_ECHO         8
+	#define ICMP_DEST_UNREACH 3
 	struct icmphdr
 	{
 		u_int8_t type;
@@ -52,12 +56,16 @@
 
 struct mtu_ip_packet
 {
-	struct ip ip_hdr;        // IPv4 header (only used when receiving ICMP packets)
-	struct icmphdr icmp_hdr; // ICMP header (used when sending and receiving ICMP packets)
-	char data[MTU_MAXSIZE];  // payload for ICMP and UDP packets
+	struct ip ip_hdr;
+	union
+	{
+		struct udphdr  udp_hdr;
+		struct icmphdr icmp_hdr;
+	} proto_hdr;
+	char data[MTU_MAXSIZE];
 };
 
-typedef enum { MTU_PROTO_ICMP = 1, MTU_PROTO_UDP = 2 } mtu_protocol;
+typedef enum { MTU_PROTO_ICMP = IPPROTO_ICMP, MTU_PROTO_UDP = IPPROTO_UDP } mtu_protocol;
 
 int mtu_discovery(struct sockaddr_in* source, struct sockaddr_in* dest, int protocol, int max_tries, int timeout);
 

@@ -9,7 +9,7 @@
 
 #define MAX_BUF MTU_MAXSIZE
 
-uint16_t _icmp_checksum(void *h, int len) // len = (header + data)
+uint16_t _net_checksum(void *h, int len) // len = (header + data)
 {
 	// this function implements the checksum function as defined in RFC 791 (can be used for both ICMP and IP)
 	uint32_t sum;
@@ -31,14 +31,14 @@ int _checkPacket(int protocol, struct mtu_ip_packet* p, struct sockaddr_in* dest
 	// returns 1 if the packet comes from the specified host and it's valid
 	if (protocol == MTU_PROTO_ICMP)
 	{
-		if (p->icmp_hdr.type == ICMP_ECHOREPLY) // valid if the source addr is server's
+		if (p->proto_hdr.icmp_hdr.type == ICMP_ECHOREPLY) // valid if the source addr is server's
 		{
 			if (packet_source->sin_addr.s_addr != dest->sin_addr.s_addr)
 				return 0; // discard it
 		}
-		else if (p->icmp_hdr.type == ICMP_DEST_UNREACH) // some kind of error occurred
+		else if (p->proto_hdr.icmp_hdr.type == ICMP_DEST_UNREACH) // some kind of error occurred
 		{
-			return -(p->icmp_hdr.code); // return error type
+			return -(p->proto_hdr.icmp_hdr.code); // return error type
 		}
 		else // unhandled ICMP packet
 			return -256;
@@ -56,33 +56,15 @@ int _checkPacket(int protocol, struct mtu_ip_packet* p, struct sockaddr_in* dest
 	return 1; // success
 }
 
-int _setDF(int fd)
-{
-	int val;
-	switch(MTU_PLATFORM_TYPE) // set DF flag depending on the OS
-	{
-		case 3: // linux
-			val = IP_PMTUDISC_PROBE; // set DF flag and ignore MTU
-			return setsockopt(fd, IPPROTO_IP, IP_MTU_DISCOVER, &val, sizeof(val));
-		default:
-		/*
-			val = 1; // set DF flag
-			if (setsockopt(fd, IPPROTO_IP, IP_DONTFRAG, &val, sizeof(val)) < 0)
-				return MTU_ERR_SOCK;
-		*/
-			perror("Platform not supported");
-			return -1;
-	}
-}
-
 int _createUDPsock(struct sockaddr_in* source, int timeout_limit)
 {
-	// creates UDP socket, returns file descriptor if no errors are caught
+	// creates UDP raw socket, returns file descriptor if no errors are caught
 
-	int fd;
+	int fd, yes = 1;
+	const int* val = &yes;
 	struct timeval timeout = {timeout_limit / 1000, (timeout_limit % 1000) * 1000};
 
-	if ((fd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) // create socket
+	if ((fd = socket(AF_INET, SOCK_RAW, IPPROTO_UDP)) < 0) // create socket
 	{
 		perror("Error in socket(udp)");
 		return MTU_ERR_SOCK;
@@ -100,9 +82,9 @@ int _createUDPsock(struct sockaddr_in* source, int timeout_limit)
 		return MTU_ERR_SOCK;
 	}
 
-	if (_setDF(fd) < 0) // set Don't Fragment flag in IPv4 packet
+	if (setsockopt(fd, IPPROTO_IP, IP_HDRINCL, val, sizeof(yes)) < 0)
 	{
-		perror("Error in setsockopt(DF)");
+		perror("Error in setsockopt(IP_HDRINCL)");
 		return MTU_ERR_SOCK;
 	}
 
@@ -111,9 +93,10 @@ int _createUDPsock(struct sockaddr_in* source, int timeout_limit)
 
 int _createICMPsock(int timeout_limit)
 {
-	// creates raw socket, returns file descriptor if no errors are caught
+	// creates ICMP raw socket, returns file descriptor if no errors are caught
 
-	int fd;
+	int fd, yes = 1;
+	const int* val = &yes;
 	struct timeval tv = {timeout_limit / 1000, (timeout_limit % 1000) * 1000};
 
 	if ((fd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP)) < 0)
@@ -128,22 +111,48 @@ int _createICMPsock(int timeout_limit)
 		return MTU_ERR_SOCK;
 	}
 
-	if (_setDF(fd) < 0) // set Don't Fragment flag in IPv4 packet
+	if (setsockopt(fd, IPPROTO_IP, IP_HDRINCL, val, sizeof(yes)) < 0)
 	{
-		perror("Error in setsockopt(DF)");
+		perror("Error in setsockopt(IP_HDRINCL)");
 		return MTU_ERR_SOCK;
 	}
 
 	return fd;
 }
 
+void _setIPhdr(struct mtu_ip_packet* p, struct sockaddr_in* source, struct sockaddr_in* dest, int protocol)
+{
+	p->ip_hdr.ip_hl = 5; // IP header length
+	p->ip_hdr.ip_v = 4; // IP version
+	p->ip_hdr.ip_tos = 0; // type of service
+	p->ip_hdr.ip_len = 0; // packet total length, filled in before every sendto()
+	p->ip_hdr.ip_id = 0; // packet ID, filled in before every sendto()
+	p->ip_hdr.ip_off = IP_DF; // set Don't Fragment field on
+	p->ip_hdr.ip_ttl = 255; // time to live
+	p->ip_hdr.ip_p = protocol; // carried protocol
+	p->ip_hdr.ip_sum = 0; // checksum, filled in before every sendto()
+	p->ip_hdr.ip_src = source->sin_addr; // source address
+	p->ip_hdr.ip_dst = dest->sin_addr; // destination address
+}
+
 int mtu_discovery(struct sockaddr_in* source, struct sockaddr_in* dest, int protocol, int max_tries, int timeout)
 {
 	int fd, i;
+	struct mtu_ip_packet s;
+	struct mtu_ip_packet r;
+	struct sockaddr_in from;
 
 	if (dest == NULL)	{ return MTU_ERR_PARAM; }
 	if (max_tries < 1)	{ return MTU_ERR_PARAM; }
 	if (timeout < 0)	{ return MTU_ERR_PARAM; }
+
+	memset(&s, 0, sizeof(struct mtu_ip_packet)); // avoid bracket initialization warnings
+	memset(&r, 0, sizeof(struct mtu_ip_packet));
+	memset(&from, 0, sizeof(struct sockaddr_in));
+	for(i=0; i < MAX_BUF; i++) // message payload
+		s.data[i] = 'a' + (i % 26);
+
+	_setIPhdr(&s, source, dest, protocol); // fill in IP header information
 
 	switch(protocol)
 	{
@@ -154,51 +163,44 @@ int mtu_discovery(struct sockaddr_in* source, struct sockaddr_in* dest, int prot
 		case MTU_PROTO_ICMP:
 			if ((fd = _createICMPsock(timeout)) < 0)
 				return fd;
+			// fill in the ICMP header
+			s.proto_hdr.icmp_hdr.type = ICMP_ECHO;
+			s.proto_hdr.icmp_hdr.un.echo.id = getpid(); // might remove in favour of something safer
+			s.proto_hdr.icmp_hdr.un.echo.sequence = 1;
+
 			break;
 		default:
 			return MTU_ERR_PARAM;
 	}
 
-	int mtu_lbound, mtu_current, mtu_ubound, mtu_best;
-	int bytes, curr_tries, res, protocol_difference, *buf_addr_send, *buf_addr_recv;
-	struct mtu_ip_packet s;
-	struct mtu_ip_packet r;
-	struct sockaddr_in from;
+	int mtu_lbound, mtu_current, mtu_ubound, mtu_best, ip_identification;
+	int bytes, curr_tries, res;
 	socklen_t from_size = sizeof(struct sockaddr_in);
-
-	memset(&s, 0, sizeof(struct mtu_ip_packet)); // avoid bracket initialization warnings
-	memset(&r, 0, sizeof(struct mtu_ip_packet));
-	memset(&from, 0, sizeof(struct sockaddr_in));
 
 	mtu_best   = MTU_ERR_TIMEOUT; // we do not know if the server is up and reachable
 	mtu_lbound = MTU_MINSIZE;
 	mtu_ubound = MTU_MAXSIZE;
-	protocol_difference = (protocol == MTU_PROTO_UDP)? MTU_IPSIZE + MTU_UDPSIZE : MTU_IPSIZE; // UDP sock only sends data, ICMP socks requires ICMP header
-	/*
-		below we use a trick to shorten the code (we don't need to separate ICMP and UDP):
-		if the protocol is ICMP send the whole packet (icmp_hdr + data, buf_addr_send set to s.icmp_hdr)
-		if the protocol is UDP, only send the data attribute (buf_addr_send set to s.data)
-	*/
-	buf_addr_send = (protocol == MTU_PROTO_ICMP)? (void*)&s.icmp_hdr : (void*)s.data;
-	buf_addr_recv = (protocol == MTU_PROTO_ICMP)? (void*)&r : (void*)r.data;
-
-	s.icmp_hdr.type = ICMP_ECHO;
-	s.icmp_hdr.un.echo.id = getpid();
-	s.icmp_hdr.un.echo.sequence = 1;
-	for(i=0; i < MAX_BUF; i++)
-		s.data[i] = 'a' + (i % 26);
+	ip_identification = 0; // IP header ID
 
 	curr_tries = max_tries;
 	while(mtu_lbound <= mtu_ubound) // binary search
 	{
 		mtu_current = (mtu_lbound + mtu_ubound) / 2;
-		s.icmp_hdr.checksum = 0; // checksum must be set to 0 before calculating it
-		s.icmp_hdr.checksum = _icmp_checksum(&s.icmp_hdr, mtu_current - MTU_IPSIZE); // calculate ICMP checksum (header + data)
+
+		ip_identification += 1;
+		s.ip_hdr.ip_id = htonl(ip_identification);
+		s.ip_hdr.ip_len = mtu_current;
+		if (protocol == MTU_PROTO_ICMP)
+		{
+			s.proto_hdr.icmp_hdr.checksum = 0; // checksum must be set to 0 before calculating it
+			s.proto_hdr.icmp_hdr.checksum = _net_checksum(&s.proto_hdr.icmp_hdr, mtu_current - MTU_IPSIZE); // calculate ICMP checksum (header + data)
+		}
+		s.ip_hdr.ip_sum = _net_checksum(&s, s.ip_hdr.ip_len); // is this necessary? Could be filled in by the kernel
 
 		if (curr_tries == max_tries)
 			printf("Testing MTU size %d bytes...", mtu_current);
 
-		if ((bytes = sendto(fd, buf_addr_send, mtu_current - protocol_difference, 0, (struct sockaddr*)dest, sizeof(struct sockaddr_in))) < 0)
+		if ((bytes = sendto(fd, &s, mtu_current, 0, (struct sockaddr*)dest, sizeof(struct sockaddr_in))) < 0)
 		{
 			if (errno == EMSGSIZE) // packet too big for the local interface
 			{
@@ -210,7 +212,8 @@ int mtu_discovery(struct sockaddr_in* source, struct sockaddr_in* dest, int prot
 			return MTU_ERR_SOCK;
 		}
 
-		if ((bytes = recvfrom(fd, buf_addr_recv, sizeof(struct mtu_ip_packet), 0, (struct sockaddr*)&from, &from_size)) < 0)
+		// TODO: check if recvfrom() works with raw UDP packets
+		if ((bytes = recvfrom(fd, &r, sizeof(struct mtu_ip_packet), 0, (struct sockaddr*)&from, &from_size)) < 0)
 		{
 			if (errno == EAGAIN || errno == EWOULDBLOCK) // timeout: packet got lost or server is down
 			{
@@ -228,7 +231,7 @@ int mtu_discovery(struct sockaddr_in* source, struct sockaddr_in* dest, int prot
 		}
 
 		// a packet has been received, check if it's valid
-		res = _checkPacket(protocol, (struct mtu_ip_packet*)buf_addr_recv, dest, &from);
+		res = _checkPacket(protocol, &r, dest, &from);
 		if (res > 0) // success, the packet comes from the server and it's valid
 		{
 			printf("valid\n");
