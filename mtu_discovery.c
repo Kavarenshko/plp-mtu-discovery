@@ -187,8 +187,11 @@ int main(int argc, char** argv)
 {
 	int ms_timeout, retries, protocol, res;
 	char format_addr[16] = {0};
-	struct sockaddr_in src = {0};
-	struct sockaddr_in dst = {0};
+	struct sockaddr_in src;
+	struct sockaddr_in dst;
+
+	memset(&src, 0, sizeof(struct sockaddr_in));
+	memset(&dst, 0, sizeof(struct sockaddr_in));
 
 	setbuf(stdout, NULL); // unbuffered output
 

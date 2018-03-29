@@ -163,11 +163,12 @@ int mtu_discovery(struct sockaddr_in* source, struct sockaddr_in* dest, int prot
 	int bytes, curr_tries, res, protocol_difference, *buf_addr_send, *buf_addr_recv;
 	struct mtu_ip_packet s;
 	struct mtu_ip_packet r;
-	struct sockaddr_in from = {0};
+	struct sockaddr_in from;
 	socklen_t from_size = sizeof(struct sockaddr_in);
 
 	memset(&s, 0, sizeof(struct mtu_ip_packet)); // avoid bracket initialization warnings
 	memset(&r, 0, sizeof(struct mtu_ip_packet));
+	memset(&from, 0, sizeof(struct sockaddr_in));
 
 	mtu_best   = MTU_ERR_TIMEOUT; // we do not know if the server is up and reachable
 	mtu_lbound = MTU_MINSIZE;
