@@ -38,14 +38,16 @@ gcc -Wall -Wextra mtu_discovery.c mtu.c -o plpmtu
 
 It should not report warnings/errors. If it does, please open an issue.
 
-If you want to run in **ICMP mode** you'll need admin rights (raw sockets requirement):
+If you want to run in **ICMP mode** type:
 ```
 sudo ./plpmtu -p icmp -s <server-ipaddr>
 ```
 If you want to run **UDP mode** instead:
 ```
-./plpmtu -p udp -s <server-ipaddr:port>
+sudo ./plpmtu -p udp -s <server-ipaddr:port>
 ```
+
+Admin rights are required in order to use raw sockets.
 
 ### Command line arguments
 

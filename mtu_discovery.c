@@ -26,7 +26,7 @@ int validateArgs(int argc, char** argv, struct sockaddr_in* lc_addr, struct sock
 
 	lc_addr->sin_family = AF_INET;
 	sv_addr->sin_family = AF_INET;
-	lc_addr->sin_port = 0; // filled in by the kernel when using UPD, unused in ICMP
+	lc_addr->sin_port = htons(25101); // arbitrary UDP port
 	inet_pton(AF_INET, "0.0.0.0", &lc_addr->sin_addr); // default local address
 
 	memset(&resolve_hints, 0, sizeof(struct addrinfo));

@@ -159,11 +159,14 @@ int mtu_discovery(struct sockaddr_in* source, struct sockaddr_in* dest, int prot
 		case MTU_PROTO_UDP:
 			if ((fd = _createUDPsock(source, timeout)) < 0)
 				return fd;
+			// fill in UDP header
+			s.proto_hdr.udp_hdr.uh_sport = source->sin_port; // filled in by the kernel
+			s.proto_hdr.udp_hdr.uh_dport = dest->sin_port;
 			break;
 		case MTU_PROTO_ICMP:
 			if ((fd = _createICMPsock(timeout)) < 0)
 				return fd;
-			// fill in the ICMP header
+			// fill in ICMP header
 			s.proto_hdr.icmp_hdr.type = ICMP_ECHO;
 			s.proto_hdr.icmp_hdr.un.echo.id = getpid(); // might remove in favour of something safer
 			s.proto_hdr.icmp_hdr.un.echo.sequence = 1;
@@ -173,7 +176,8 @@ int mtu_discovery(struct sockaddr_in* source, struct sockaddr_in* dest, int prot
 			return MTU_ERR_PARAM;
 	}
 
-	int mtu_lbound, mtu_current, mtu_ubound, mtu_best, ip_identification;
+	uint16_t ip_identification;
+	int mtu_lbound, mtu_current, mtu_ubound, mtu_best;
 	int bytes, curr_tries, res;
 	socklen_t from_size = sizeof(struct sockaddr_in);
 
@@ -187,13 +191,21 @@ int mtu_discovery(struct sockaddr_in* source, struct sockaddr_in* dest, int prot
 	{
 		mtu_current = (mtu_lbound + mtu_ubound) / 2;
 
-		ip_identification += 1;
-		s.ip_hdr.ip_id = htonl(ip_identification);
+		// fill in variable IP header fields
+		s.ip_hdr.ip_id = htons(++ip_identification);
 		s.ip_hdr.ip_len = mtu_current;
+
+		// protocol-specific header fields
 		if (protocol == MTU_PROTO_ICMP)
 		{
 			s.proto_hdr.icmp_hdr.checksum = 0; // checksum must be set to 0 before calculating it
 			s.proto_hdr.icmp_hdr.checksum = _net_checksum(&s.proto_hdr.icmp_hdr, mtu_current - MTU_IPSIZE); // calculate ICMP checksum (header + data)
+		}
+		else if (protocol == MTU_PROTO_UDP)
+		{
+			s.proto_hdr.udp_hdr.uh_ulen = htons(mtu_current - MTU_IPSIZE);
+			s.proto_hdr.udp_hdr.uh_sum = 0; // checksum must be set to 0 before calculating it
+			//s.proto_hdr.udp_hdr.uh_sum = _net_checksum(&s.proto_hdr.udp_hdr, mtu_current - MTU_IPSIZE); // calculate UDP checksum (header + data)
 		}
 		s.ip_hdr.ip_sum = _net_checksum(&s, s.ip_hdr.ip_len); // is this necessary? Could be filled in by the kernel
 
