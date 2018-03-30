@@ -24,7 +24,6 @@
 #define MTU_MAXSIZE  65536  // maximum IPv4 size in bytes (RFC 791)
 
 #if defined(__APPLE__) || defined(__MACH__)
-	#define MTU_PLATFORM_TYPE 1
 	#define ICMP_ECHOREPLY    0
 	#define ICMP_ECHO         8
 	#define ICMP_DEST_UNREACH 3
@@ -48,10 +47,6 @@
 			} frag;
 		} un;
 	};
-#elif defined(_WIN32) || defined(_WIN64)
-	#define MTU_PLATFORM_TYPE 2
-#else
-	#define MTU_PLATFORM_TYPE 3
 #endif
 
 struct mtu_ip_packet

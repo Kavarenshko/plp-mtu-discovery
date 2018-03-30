@@ -47,7 +47,7 @@ int _checkPacket(int protocol, struct mtu_ip_packet* p, struct sockaddr_in* dest
 	{
 		if (packet_source->sin_addr.s_addr != dest->sin_addr.s_addr) // packet originated from another host
 			return 0; // discard it
-		if (packet_source->sin_port != dest->sin_port) // same host but different port
+		if (p->proto_hdr.udp_hdr.uh_sport != dest->sin_port) // same host but different port
 			return 0; // discard it
 	}
 	else // unknown protocol
@@ -76,13 +76,13 @@ int _createUDPsock(struct sockaddr_in* source, int timeout_limit)
 		return MTU_ERR_SOCK;
 	}
 
-	if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(timeout)) < 0) // set timeout to input operations
+	if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(timeout)) != 0) // set timeout to input operations
 	{
 		perror("Error in setsockopt(timeout/udp)");
 		return MTU_ERR_SOCK;
 	}
 
-	if (setsockopt(fd, IPPROTO_IP, IP_HDRINCL, val, sizeof(yes)) < 0)
+	if (setsockopt(fd, IPPROTO_IP, IP_HDRINCL, val, sizeof(yes)) != 0)
 	{
 		perror("Error in setsockopt(IP_HDRINCL)");
 		return MTU_ERR_SOCK;
@@ -111,11 +111,37 @@ int _createICMPsock(int timeout_limit)
 		return MTU_ERR_SOCK;
 	}
 
-	if (setsockopt(fd, IPPROTO_IP, IP_HDRINCL, val, sizeof(yes)) < 0)
+	if (setsockopt(fd, IPPROTO_IP, IP_HDRINCL, val, sizeof(yes)) != 0)
 	{
 		perror("Error in setsockopt(IP_HDRINCL)");
 		return MTU_ERR_SOCK;
 	}
+
+	#if defined(__linux__)
+		/*
+			In some instances, linux can cache the value of a previous MTU limit to a certain address.
+			This only happens when manually setting the IP header (IP_HDRINCL).
+
+			As stated in man pages:
+			"The kernel will reject (with EMSGSIZE) datagrams that are bigger than the known path MTU.", this is normal behaviour (expected and handled correctly).
+			The tricky part is this one:
+			"When PMTU discovery is enabled, the kernel automatically keeps track of the path MTU per destination host.".
+			When using IP_HDRINCL, the kernel enables PMTU discovery by default: subsequent calls to sendto() can yield different result due to MTU caching.
+			Disconnecting from the network or waiting several minutes resets the kernel info.
+
+			When the cached result is used, EMSGSIZE is returned AND an ICMP type 3 message (DEST_UNREACH, Fragmentation Needed) is sent from this host to itself.
+			This behaviour is not documented (and somewhat confusing).
+
+			Since we don't want MTU caching, we set the IP_PMTUDISC_PROBE option, which totally ignores path MTU.
+		*/
+		int mtu_val = IP_PMTUDISC_PROBE;
+		const int* mtu_preference = &mtu_val;
+		if (setsockopt(fd, IPPROTO_IP, IP_MTU_DISCOVER, mtu_preference, 1) != 0)
+		{
+			perror("Error in setsockopt(IP_MTU_DISCOVER)");
+			return MTU_ERR_SOCK;
+		}
+	#endif
 
 	return fd;
 }
@@ -127,7 +153,7 @@ void _setIPhdr(struct mtu_ip_packet* p, struct sockaddr_in* source, struct socka
 	p->ip_hdr.ip_tos = 0; // type of service
 	p->ip_hdr.ip_len = 0; // packet total length, filled in before every sendto()
 	p->ip_hdr.ip_id = 0; // packet ID, filled in before every sendto()
-	p->ip_hdr.ip_off = IP_DF; // set Don't Fragment field on
+	p->ip_hdr.ip_off = htons(IP_DF); // set Don't Fragment field on
 	p->ip_hdr.ip_ttl = 255; // time to live
 	p->ip_hdr.ip_p = protocol; // carried protocol
 	p->ip_hdr.ip_sum = 0; // checksum, filled in before every sendto()
@@ -169,14 +195,13 @@ int mtu_discovery(struct sockaddr_in* source, struct sockaddr_in* dest, int prot
 			// fill in ICMP header
 			s.proto_hdr.icmp_hdr.type = ICMP_ECHO;
 			s.proto_hdr.icmp_hdr.un.echo.id = getpid(); // might remove in favour of something safer
-			s.proto_hdr.icmp_hdr.un.echo.sequence = 1;
 
 			break;
 		default:
 			return MTU_ERR_PARAM;
 	}
 
-	uint16_t ip_identification;
+	uint16_t ip_identification, icmp_seqn;
 	int mtu_lbound, mtu_current, mtu_ubound, mtu_best;
 	int bytes, curr_tries, res;
 	socklen_t from_size = sizeof(struct sockaddr_in);
@@ -184,6 +209,7 @@ int mtu_discovery(struct sockaddr_in* source, struct sockaddr_in* dest, int prot
 	mtu_best   = MTU_ERR_TIMEOUT; // we do not know if the server is up and reachable
 	mtu_lbound = MTU_MINSIZE;
 	mtu_ubound = MTU_MAXSIZE;
+	icmp_seqn = 0;
 	ip_identification = 0; // IP header ID
 
 	curr_tries = max_tries;
@@ -198,6 +224,7 @@ int mtu_discovery(struct sockaddr_in* source, struct sockaddr_in* dest, int prot
 		// protocol-specific header fields
 		if (protocol == MTU_PROTO_ICMP)
 		{
+			s.proto_hdr.icmp_hdr.un.echo.sequence = htons(++icmp_seqn);
 			s.proto_hdr.icmp_hdr.checksum = 0; // checksum must be set to 0 before calculating it
 			s.proto_hdr.icmp_hdr.checksum = _net_checksum(&s.proto_hdr.icmp_hdr, mtu_current - MTU_IPSIZE); // calculate ICMP checksum (header + data)
 		}
@@ -212,11 +239,11 @@ int mtu_discovery(struct sockaddr_in* source, struct sockaddr_in* dest, int prot
 		if (curr_tries == max_tries)
 			printf("Testing MTU size %d bytes...", mtu_current);
 
-		if ((bytes = sendto(fd, &s, mtu_current, 0, (struct sockaddr*)dest, sizeof(struct sockaddr_in))) < 0)
+		if ((bytes = sendto(fd, &s, mtu_current, 0, (struct sockaddr*)dest, sizeof(struct sockaddr_in))) == -1)
 		{
 			if (errno == EMSGSIZE) // packet too big for the local interface
 			{
-				printf("packet too big for local interface\n");
+				printf("packet too big for local interface %d\n", errno);
 				mtu_ubound = mtu_current - 1; // update range
 				continue;
 			}
