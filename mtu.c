@@ -153,12 +153,24 @@ void _setIPhdr(struct mtu_ip_packet* p, struct sockaddr_in* source, struct socka
 	p->ip_hdr.ip_tos = 0; // type of service
 	p->ip_hdr.ip_len = 0; // packet total length, filled in before every sendto()
 	p->ip_hdr.ip_id = 0; // packet ID, filled in before every sendto()
-	p->ip_hdr.ip_off = htons(IP_DF); // set Don't Fragment field on
 	p->ip_hdr.ip_ttl = 255; // time to live
 	p->ip_hdr.ip_p = protocol; // carried protocol
 	p->ip_hdr.ip_sum = 0; // checksum, filled in before every sendto()
 	p->ip_hdr.ip_src = source->sin_addr; // source address
 	p->ip_hdr.ip_dst = dest->sin_addr; // destination address
+
+	/*
+		Set Don't Fragment field on.
+		Since this field is 2 bytes long, we should use htons() to set it; however, some BSD versions
+		and OSX require this field in host byte order.
+
+		https://developer.apple.com/legacy/library/documentation/Darwin/Reference/ManPages/man4/ip.4.html
+	*/
+	#if defined(__APPLE__) || defined(__MACH__)
+		p->ip_hdr.ip_off = IP_DF;
+	#else
+		p->ip_hdr.ip_off = htons(IP_DF);
+	#endif
 }
 
 int mtu_discovery(struct sockaddr_in* source, struct sockaddr_in* dest, int protocol, int max_tries, int timeout)
@@ -243,7 +255,7 @@ int mtu_discovery(struct sockaddr_in* source, struct sockaddr_in* dest, int prot
 		{
 			if (errno == EMSGSIZE) // packet too big for the local interface
 			{
-				printf("packet too big for local interface %d\n", errno);
+				printf("packet too big for local interface\n");
 				mtu_ubound = mtu_current - 1; // update range
 				continue;
 			}
@@ -251,7 +263,6 @@ int mtu_discovery(struct sockaddr_in* source, struct sockaddr_in* dest, int prot
 			return MTU_ERR_SOCK;
 		}
 
-		// TODO: check if recvfrom() works with raw UDP packets
 		if ((bytes = recvfrom(fd, &r, sizeof(struct mtu_ip_packet), 0, (struct sockaddr*)&from, &from_size)) < 0)
 		{
 			if (errno == EAGAIN || errno == EWOULDBLOCK) // timeout: packet got lost or server is down

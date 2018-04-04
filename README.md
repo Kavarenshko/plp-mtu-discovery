@@ -66,7 +66,7 @@ sudo ./plpmtu -p icmp -s 184.12.26.131
 ```
 Perform MTU discovery (ICMP mode) with 184.12.26.131. 
 ```
-./plpmtu -p udp -s 184.12.26.131:24000 -t 1500 -r 5
+sudo ./plpmtu -p udp -s 184.12.26.131:24000 -t 1500 -r 5
 ```
 Perform MTU discovery (UDP mode) with 184.12.26.131 on port 24000. If a response is not received within 1.5 seconds for 5 times in a row, reduce MTU threshold.
 
