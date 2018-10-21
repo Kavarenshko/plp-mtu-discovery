@@ -29,6 +29,7 @@ uint16_t _net_checksum(void *h, int len) // len = (header + data)
 int _checkPacket(int protocol, struct mtu_ip_packet* p, struct sockaddr_in* dest, struct sockaddr_in* packet_source)
 {
 	// returns 1 if the packet comes from the specified host and it's valid
+
 	if (protocol == MTU_PROTO_ICMP)
 	{
 		if (p->proto_hdr.icmp_hdr.type == ICMP_ECHOREPLY) // valid if the source addr is server's
@@ -47,8 +48,20 @@ int _checkPacket(int protocol, struct mtu_ip_packet* p, struct sockaddr_in* dest
 	{
 		if (packet_source->sin_addr.s_addr != dest->sin_addr.s_addr) // packet originated from another host
 			return 0; // discard it
-		if (p->proto_hdr.udp_hdr.uh_sport != dest->sin_port) // same host but different port
-			return 0; // discard it
+
+		/*
+			Some operating systems define the members of struct udphdr depending on the existence
+			of the __FAVOR_BSD macro.
+
+			https://stackoverflow.com/questions/21893601/no-member-th-seq-in-struct-tcphdr-working-with-pcap
+		*/
+		#if defined(__FAVOR_BSD)
+			if (p->proto_hdr.udp_hdr.uh_sport != dest->sin_port) // same host but different port
+				return 0; // discard it
+		#else
+			if (p->proto_hdr.udp_hdr.source != dest->sin_port) // same host but different port
+				return 0; // discard it
+		#endif
 	}
 	else // unknown protocol
 		return -256;
@@ -126,7 +139,7 @@ int _createICMPsock(int timeout_limit)
 			"The kernel will reject (with EMSGSIZE) datagrams that are bigger than the known path MTU.", this is normal behaviour (expected and handled correctly).
 			The tricky part is this one:
 			"When PMTU discovery is enabled, the kernel automatically keeps track of the path MTU per destination host.".
-			When using IP_HDRINCL, the kernel enables PMTU discovery by default: subsequent calls to sendto() can yield different result due to MTU caching.
+			When using IP_HDRINCL, the kernel enables PMTU discovery by default: subsequent calls to sendto() might yield different result due to MTU caching.
 			Disconnecting from the network or waiting several minutes resets the kernel info.
 
 			When the cached result is used, EMSGSIZE is returned AND an ICMP type 3 message (DEST_UNREACH, Fragmentation Needed) is sent from this host to itself.
@@ -198,8 +211,14 @@ int mtu_discovery(struct sockaddr_in* source, struct sockaddr_in* dest, int prot
 			if ((fd = _createUDPsock(source, timeout)) < 0)
 				return fd;
 			// fill in UDP header
-			s.proto_hdr.udp_hdr.uh_sport = source->sin_port; // filled in by the kernel
-			s.proto_hdr.udp_hdr.uh_dport = dest->sin_port;
+			#if defined(__FAVOR_BSD) // refer to the comment above
+				s.proto_hdr.udp_hdr.uh_sport = source->sin_port; // filled in by the kernel
+				s.proto_hdr.udp_hdr.uh_dport = dest->sin_port;
+			#else
+				s.proto_hdr.udp_hdr.source = source->sin_port; // filled in by the kernel
+				s.proto_hdr.udp_hdr.dest = dest->sin_port;
+			#endif
+
 			break;
 		case MTU_PROTO_ICMP:
 			if ((fd = _createICMPsock(timeout)) < 0)
@@ -242,9 +261,15 @@ int mtu_discovery(struct sockaddr_in* source, struct sockaddr_in* dest, int prot
 		}
 		else if (protocol == MTU_PROTO_UDP)
 		{
-			s.proto_hdr.udp_hdr.uh_ulen = htons(mtu_current - MTU_IPSIZE);
-			s.proto_hdr.udp_hdr.uh_sum = 0; // checksum must be set to 0 before calculating it
-			//s.proto_hdr.udp_hdr.uh_sum = _net_checksum(&s.proto_hdr.udp_hdr, mtu_current - MTU_IPSIZE); // calculate UDP checksum (header + data)
+			#if defined(__FAVOR_BSD)
+				s.proto_hdr.udp_hdr.uh_ulen = htons(mtu_current - MTU_IPSIZE);
+				s.proto_hdr.udp_hdr.uh_sum = 0; // checksum must be set to 0 before calculating it
+				//s.proto_hdr.udp_hdr.uh_sum = _net_checksum(&s.proto_hdr.udp_hdr, mtu_current - MTU_IPSIZE); // calculate UDP checksum (header + data)
+			#else
+				s.proto_hdr.udp_hdr.len = htons(mtu_current - MTU_IPSIZE);
+				s.proto_hdr.udp_hdr.check = 0; // checksum must be set to 0 before calculating it
+				//s.proto_hdr.udp_hdr.check = _net_checksum(&s.proto_hdr.udp_hdr, mtu_current - MTU_IPSIZE); // calculate UDP checksum (header + data)
+			#endif
 		}
 		s.ip_hdr.ip_sum = _net_checksum(&s, s.ip_hdr.ip_len); // is this necessary? Could be filled in by the kernel
 

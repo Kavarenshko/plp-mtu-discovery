@@ -31,7 +31,7 @@ The same algorithm applies to UDP packets, but you need to run a server (*udp_se
 
 ### Compiling & Running
 
-This program should run fine on most Linux distributions. Work to support OS X is underway.
+This program should run fine on most Linux distributions and OSX.
 ```
 gcc -Wall -Wextra mtu_discovery.c mtu.c -o plpmtu
 ```
