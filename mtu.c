@@ -55,7 +55,7 @@ int _checkPacket(int protocol, struct mtu_ip_packet* p, struct sockaddr_in* dest
 
 			https://stackoverflow.com/questions/21893601/no-member-th-seq-in-struct-tcphdr-working-with-pcap
 		*/
-		#if defined(__FAVOR_BSD)
+		#if defined(__FAVOR_BSD) || defined(__APPLE__) || defined(__MACH__)
 			if (p->proto_hdr.udp_hdr.uh_sport != dest->sin_port) // same host but different port
 				return 0; // discard it
 		#else
@@ -211,7 +211,7 @@ int mtu_discovery(struct sockaddr_in* source, struct sockaddr_in* dest, int prot
 			if ((fd = _createUDPsock(source, timeout)) < 0)
 				return fd;
 			// fill in UDP header
-			#if defined(__FAVOR_BSD) // refer to the comment above
+			#if defined(__FAVOR_BSD) || defined(__APPLE__) || defined(__MACH__) // refer to the comment above
 				s.proto_hdr.udp_hdr.uh_sport = source->sin_port; // filled in by the kernel
 				s.proto_hdr.udp_hdr.uh_dport = dest->sin_port;
 			#else
@@ -261,7 +261,7 @@ int mtu_discovery(struct sockaddr_in* source, struct sockaddr_in* dest, int prot
 		}
 		else if (protocol == MTU_PROTO_UDP)
 		{
-			#if defined(__FAVOR_BSD)
+			#if defined(__FAVOR_BSD) || defined(__APPLE__) || defined(__MACH__)
 				s.proto_hdr.udp_hdr.uh_ulen = htons(mtu_current - MTU_IPSIZE);
 				s.proto_hdr.udp_hdr.uh_sum = 0; // checksum must be set to 0 before calculating it
 				//s.proto_hdr.udp_hdr.uh_sum = _net_checksum(&s.proto_hdr.udp_hdr, mtu_current - MTU_IPSIZE); // calculate UDP checksum (header + data)
