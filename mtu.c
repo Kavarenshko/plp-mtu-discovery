@@ -48,20 +48,8 @@ int _checkPacket(int protocol, struct mtu_ip_packet* p, struct sockaddr_in* dest
 	{
 		if (packet_source->sin_addr.s_addr != dest->sin_addr.s_addr) // packet originated from another host
 			return 0; // discard it
-
-		/*
-			Some operating systems define the members of struct udphdr depending on the existence
-			of the __FAVOR_BSD macro.
-
-			https://stackoverflow.com/questions/21893601/no-member-th-seq-in-struct-tcphdr-working-with-pcap
-		*/
-		#if defined(__FAVOR_BSD) || defined(__APPLE__) || defined(__MACH__)
-			if (p->proto_hdr.udp_hdr.uh_sport != dest->sin_port) // same host but different port
-				return 0; // discard it
-		#else
-			if (p->proto_hdr.udp_hdr.source != dest->sin_port) // same host but different port
-				return 0; // discard it
-		#endif
+		if (p->proto_hdr.udp_hdr.uh_sport != dest->sin_port) // same host but different port
+			return 0; // discard it
 	}
 	else // unknown protocol
 		return -256;
@@ -211,13 +199,8 @@ int mtu_discovery(struct sockaddr_in* source, struct sockaddr_in* dest, int prot
 			if ((fd = _createUDPsock(source, timeout)) < 0)
 				return fd;
 			// fill in UDP header
-			#if defined(__FAVOR_BSD) || defined(__APPLE__) || defined(__MACH__) // refer to the comment above
-				s.proto_hdr.udp_hdr.uh_sport = source->sin_port; // filled in by the kernel
-				s.proto_hdr.udp_hdr.uh_dport = dest->sin_port;
-			#else
-				s.proto_hdr.udp_hdr.source = source->sin_port; // filled in by the kernel
-				s.proto_hdr.udp_hdr.dest = dest->sin_port;
-			#endif
+			s.proto_hdr.udp_hdr.uh_sport = source->sin_port; // filled in by the kernel
+			s.proto_hdr.udp_hdr.uh_dport = dest->sin_port;
 
 			break;
 		case MTU_PROTO_ICMP:
@@ -261,15 +244,9 @@ int mtu_discovery(struct sockaddr_in* source, struct sockaddr_in* dest, int prot
 		}
 		else if (protocol == MTU_PROTO_UDP)
 		{
-			#if defined(__FAVOR_BSD) || defined(__APPLE__) || defined(__MACH__)
-				s.proto_hdr.udp_hdr.uh_ulen = htons(mtu_current - MTU_IPSIZE);
-				s.proto_hdr.udp_hdr.uh_sum = 0; // checksum must be set to 0 before calculating it
-				//s.proto_hdr.udp_hdr.uh_sum = _net_checksum(&s.proto_hdr.udp_hdr, mtu_current - MTU_IPSIZE); // calculate UDP checksum (header + data)
-			#else
-				s.proto_hdr.udp_hdr.len = htons(mtu_current - MTU_IPSIZE);
-				s.proto_hdr.udp_hdr.check = 0; // checksum must be set to 0 before calculating it
-				//s.proto_hdr.udp_hdr.check = _net_checksum(&s.proto_hdr.udp_hdr, mtu_current - MTU_IPSIZE); // calculate UDP checksum (header + data)
-			#endif
+			s.proto_hdr.udp_hdr.uh_ulen = htons(mtu_current - MTU_IPSIZE);
+			s.proto_hdr.udp_hdr.uh_sum = 0; // checksum must be set to 0 before calculating it
+			//s.proto_hdr.udp_hdr.uh_sum = _net_checksum(&s.proto_hdr.udp_hdr, mtu_current - MTU_IPSIZE); // calculate UDP checksum (header + data)
 		}
 		s.ip_hdr.ip_sum = _net_checksum(&s, s.ip_hdr.ip_len); // is this necessary? Could be filled in by the kernel
 

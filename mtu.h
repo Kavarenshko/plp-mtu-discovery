@@ -4,7 +4,6 @@
 
 #include <sys/socket.h> // socket()
 #include <netinet/ip.h> // struct ip
-#include <netinet/udp.h> // struct udphdr
 #include <netinet/ip_icmp.h> // struct icmphdr
 
 #define MTU_ERR_PARAM    -1 // invalid parameter
@@ -49,13 +48,21 @@
 	};
 #endif
 
+struct udpheader
+{
+	uint16_t uh_sport;
+	uint16_t uh_dport;
+	uint16_t uh_ulen;
+	uint16_t uh_sum;
+};
+
 struct mtu_ip_packet
 {
 	struct ip ip_hdr;
 	union
 	{
-		struct udphdr  udp_hdr;
-		struct icmphdr icmp_hdr;
+		struct udpheader udp_hdr;
+		struct icmphdr   icmp_hdr;
 	} proto_hdr;
 	char data[MTU_MAXSIZE];
 };
